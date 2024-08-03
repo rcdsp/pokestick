@@ -1,0 +1,22 @@
+[request]
+method = "POST" 
+endpoint = "{{baser_url}}/psapi/v4.0/authenticate"
+
+[request.body]
+email = "{{test_email}}"
+password = "{{test_password}}"
+mode = "token"
+
+[env.headers]
+X-Ps-Api-Key = true
+
+[save]
+token = "$('token')"
+personal_org = "$('org[0].id')"
+
+[logs.req]
+enabled = true
+
+[logs.res]
+enabled = true
+

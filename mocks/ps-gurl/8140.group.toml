@@ -1,0 +1,8 @@
+[env]
+name = "8140"
+base_url = "https://ps.8140.photoshelter.dev"
+api_key = "eONADJwhZbU"
+
+[env.headers]
+X-Ps-Api-Key = "${api_key}"
+X-Ps-Auth-Token = "${token}"
