@@ -1,4 +1,4 @@
-module github.com/rcdsp/gurl
+module github.com/rcdsp/pokestick
 
 go 1.22.5
 
