@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"regexp"
 
 	"internal/strcase"
@@ -35,7 +36,7 @@ func Init() {
 	flag.StringVar(
 		&path, 
 		"path", 
-		"mocks/ps-gurl/",
+		"mocks/ps/",
 		"Path to the root of a gurl project or a specific .toml file",
 	)
 	
@@ -58,10 +59,12 @@ func Init() {
 		panic(err)
 	}
 
-	fmt.Println(resolveExpression(config.Env.Headers.PsApiKey))
+	resolvedValue := resolveExpression(config.Env.Headers.PsApiKey, config)
+	config.Env.Headers.PsApiKey = resolvedValue
+	fmt.Println(config.Env.Headers.PsApiKey)
 }
 
-func resolveExpression(expression string) string {
+func resolveExpression(expression string, config Config) string {
 	re := regexp.MustCompile(`\$\{([^}]*)\}`)
 	match := re.FindStringSubmatch(expression)
 
@@ -70,8 +73,6 @@ func resolveExpression(expression string) string {
 		panic(fmt.Errorf("expression %s does not contain a valid key", expression))
 	}
 
-	key := match[1]
-
-	return strcase.ToPascal(key)
+	key := strcase.ToPascal(match[1])
+	return reflect.ValueOf(config.Env).FieldByName(key).String()
 }
-	
