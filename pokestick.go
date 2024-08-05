@@ -13,16 +13,16 @@ import (
 	"github.com/pelletier/go-toml"
 )
 
-type Config struct {
-	Env struct {
+type Env struct {
+	Config struct {
 		Name  string `toml:"name"`
 		BaseUrl string `toml:"base_url"`
 		ApiKey string `toml:"api_key"`
 
-		Headers struct {
-			PsApiKey string `toml:"X-Ps-Api-Key"`
-			PsAuthToken string `toml:"X-Ps-Auth-Token"`
-		}
+	}
+	Headers struct {
+		PsApiKey string `toml:"X-Ps-Api-Key"`
+		PsAuthToken string `toml:"X-Ps-Auth-Token"`
 	}
 }
 
@@ -31,18 +31,26 @@ func main() {
 }
 
 func Init() {
-	var path string
+	var env string
+	var req string
 
 	flag.StringVar(
-		&path, 
+		&env, 
+		"env", 
+		"mocks/ps/",
+		"Path to the root of a gurl project or a specific .env.toml file",
+	)
+
+	flag.StringVar(
+		&req, 
 		"path", 
 		"mocks/ps/",
-		"Path to the root of a gurl project or a specific .toml file",
+		"Path to .toml file describing an api request", 
 	)
 	
 	flag.Parse()
 
-	file, err := os.Open(path + "8140.group.toml")
+	file, err := os.Open(env + "8140.group.toml")
 	if err != nil {
 		panic(err)
 	}
@@ -53,26 +61,49 @@ func Init() {
 		panic(err)
 	}
 
-	var config Config
-	err = toml.Unmarshal(b, &config)
+	var environment Env
+	err = toml.Unmarshal(b, &environment)
 	if err != nil {
 		panic(err)
 	}
 
-	resolvedValue := resolveExpression(config.Env.Headers.PsApiKey, config)
-	config.Env.Headers.PsApiKey = resolvedValue
-	fmt.Println(config.Env.Headers.PsApiKey)
+	resolveEnvironment(reflect.ValueOf(environment), environment)
+
+	fmt.Println(environment)
 }
 
-func resolveExpression(expression string, config Config) string {
+func resolveEnvironment(values reflect.Value, env Env) {
+	for i := 0; i < values.NumField(); i++ {
+		fieldName := values.Type().Field(i).Name
+		fieldValue := values.Field(i)
+		
+		if fieldValue.Kind() == reflect.Struct {
+			fmt.Println(fieldName)
+			resolveEnvironment(fieldValue, env)
+		}
+
+		if fieldValue.Kind() == reflect.String {
+			fieldValue = reflect.ValueOf(resolveExpression(fieldValue.String(), env))
+			fmt.Println(values.Type().Field(i).Name, fieldValue)
+		}
+	}
+}
+
+func resolveExpression(expression string, env Env) string {
 	re := regexp.MustCompile(`\$\{([^}]*)\}`)
 	match := re.FindStringSubmatch(expression)
 
 
 	if len(match) == 0 {
-		panic(fmt.Errorf("expression %s does not contain a valid key", expression))
+		return expression
 	}
 
 	key := strcase.ToPascal(match[1])
-	return reflect.ValueOf(config.Env).FieldByName(key).String()
+	value := reflect.ValueOf(env.Config).FieldByName(key)
+
+	if value.Kind() == reflect.Invalid {
+		return expression
+	}	
+
+	return value.String()
 }

@@ -1,7 +1,6 @@
 package strcase
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 	"unicode"
@@ -16,10 +15,8 @@ func NormalizeCase(s string) string {
 
 	switch {
 	case camelCaseRegex.MatchString(s):
-	fmt.Println("camel")
 		return FromCamel(s)
 	case pascalCaseRegex.MatchString(s):
-		fmt.Println("pascal")
 		return FromPascal(s)
 	case snakeCaseRegex.MatchString(s):
 		return FromSnake(s)
