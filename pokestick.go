@@ -1,56 +1,101 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
-	"reflect"
 	"regexp"
-
-	"internal/strcase"
+	"strings"
 
 	"github.com/pelletier/go-toml"
 )
 
-type Env struct {
-	Config struct {
-		Name  string `toml:"name"`
-		BaseUrl string `toml:"base_url"`
-		ApiKey string `toml:"api_key"`
+type TomlMap map[string]map[string]any
 
-	}
-	Headers struct {
-		PsApiKey string `toml:"X-Ps-Api-Key"`
-		PsAuthToken string `toml:"X-Ps-Auth-Token"`
-	}
+type Flags struct {
+	EnvPath string
+	RequestPath string
 }
+
+type Req struct {
+	Request Request
+	Body map[string]any
+	Save map[string]any
+	Response Response
+}
+
+type Request =  struct {
+	Url string
+	Method Method
+	ContentType string
+	Log bool
+}
+
+type Response = struct {
+	Log bool
+}
+
+type Method string
+
+const (
+	GET Method = "GET"
+	POST Method = "POST"
+	PUT Method = "PUT"
+	PATCH Method = "PATCH"
+	DELETE Method = "DELETE"
+)
+
+var env TomlMap
 
 func main() {
 	Init()
 }
 
 func Init() {
+	flags := parseFlags()
+	env = readTomlFile[TomlMap](flags.EnvPath)
+	req := readTomlFile[Req](flags.RequestPath)
+
+	executeRequest(req)
+}
+
+func parseFlags() Flags {
 	var env string
 	var req string
 
 	flag.StringVar(
 		&env, 
 		"env", 
-		"mocks/ps/",
-		"Path to the root of a gurl project or a specific .env.toml file",
+		"mocks/ps/dev.env.toml",
+		"Path to the root of a pokestick project or a specific .env.toml file",
 	)
 
 	flag.StringVar(
 		&req, 
 		"path", 
-		"mocks/ps/",
+		"mocks/ps/authenticate.toml",
 		"Path to .toml file describing an api request", 
 	)
 	
 	flag.Parse()
 
-	file, err := os.Open(env + "8140.group.toml")
+	var flags = Flags{
+		EnvPath: env,
+		RequestPath: req,
+	}
+
+	return flags
+}
+
+func readTomlFile[T TomlMap | Req](path string) T {
+	if path == "" {
+		panic("No file path provided")
+	}
+	
+	file, err := os.Open(path)
 	if err != nil {
 		panic(err)
 	}
@@ -61,49 +106,93 @@ func Init() {
 		panic(err)
 	}
 
-	var environment Env
-	err = toml.Unmarshal(b, &environment)
+	var tomlMap T
+	err = toml.Unmarshal(b, &tomlMap)
 	if err != nil {
 		panic(err)
 	}
 
-	resolveEnvironment(reflect.ValueOf(environment), environment)
+	fmt.Println(tomlMap)
 
-	fmt.Println(environment)
+	return tomlMap
 }
 
-func resolveEnvironment(values reflect.Value, env Env) {
-	for i := 0; i < values.NumField(); i++ {
-		fieldName := values.Type().Field(i).Name
-		fieldValue := values.Field(i)
-		
-		if fieldValue.Kind() == reflect.Struct {
-			fmt.Println(fieldName)
-			resolveEnvironment(fieldValue, env)
-		}
+func executeRequest(config Req) {
+	request := config.Request
+	method := resolveExpression(string(request.Method))
 
-		if fieldValue.Kind() == reflect.String {
-			fieldValue = reflect.ValueOf(resolveExpression(fieldValue.String(), env))
-			fmt.Println(values.Type().Field(i).Name, fieldValue)
-		}
+	switch method {
+	case "GET":
+	case "POST":
+		handleRequest(config)
+	default:
+		panic("Unsupported request method")
 	}
 }
 
-func resolveExpression(expression string, env Env) string {
+func handleRequest(config Req) {
+	url := resolveExpression(config.Request.Url)
+	method := config.Request.Method
+	contentType := resolveExpression(config.Request.ContentType)
+	_, b := config.Body, new(bytes.Buffer)
+	client := &http.Client{}
+
+	req, err :=http.NewRequest(string(method), url, b)
+	if err != nil {
+		panic(err)
+	}
+
+	req.Header.Add("Content-Type", contentType)
+	for k, v := range env["headers"] {
+		req.Header.Add(k, resolveExpression(v.(string)))
+	}
+
+	headers := req.Header
+
+	for k, v := range headers {
+		fmt.Println(k, v)
+	}
+	
+	res, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer res.Body.Close()
+
+	if config.Request.Log {
+		renderTableHeader("Request")
+		fmt.Printf("%s => %s\n%s\n", config.Request.Method, url, contentType)
+		fmt.Println("Body:", b)
+	}
+	
+	if config.Response.Log {
+		renderTableHeader("Response")
+		fmt.Printf("%s", res.Status)
+	}
+}
+
+
+func resolveExpression(expression string) string {
 	re := regexp.MustCompile(`\$\{([^}]*)\}`)
 	match := re.FindStringSubmatch(expression)
-
 
 	if len(match) == 0 {
 		return expression
 	}
 
-	key := strcase.ToPascal(match[1])
-	value := reflect.ValueOf(env.Config).FieldByName(key)
+	replace, key := match[0], match[1]
 
-	if value.Kind() == reflect.Invalid {
-		return expression
-	}	
+	value, ok := env["config"][key].(string)
+	if !ok {
+		fmt.Printf("Key %s not found in config %v", key, env["config"])
+	}
+	value = strings.Replace(expression, replace, value, -1)
+	
+	return value
+}
 
-	return value.String()
+func renderTableHeader(tableName string) {
+	header := strings.Repeat(("="), 50)
+	tableName = strings.Repeat(" ", 25 - (len(tableName) / 2)) + strings.ToTitle(tableName)
+	fmt.Printf("\n%s\n%s\n%s\n", header, tableName, header)
 }
