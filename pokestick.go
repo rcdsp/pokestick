@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ type Flags struct {
 type Req struct {
 	Request Request
 	Body map[string]any
+	Headers map[string]any
 	Save map[string]any
 	Response Response
 }
@@ -112,8 +114,6 @@ func readTomlFile[T TomlMap | Req](path string) T {
 		panic(err)
 	}
 
-	fmt.Println(tomlMap)
-
 	return tomlMap
 }
 
@@ -134,23 +134,25 @@ func handleRequest(config Req) {
 	url := resolveExpression(config.Request.Url)
 	method := config.Request.Method
 	contentType := resolveExpression(config.Request.ContentType)
-	_, b := config.Body, new(bytes.Buffer)
+	body, err := json.Marshal(config.Body)
+	if err != nil {
+		panic(err)
+	}
 	client := &http.Client{}
 
-	req, err :=http.NewRequest(string(method), url, b)
+	req, err :=http.NewRequest(string(method), url, bytes.NewBuffer(body))
 	if err != nil {
 		panic(err)
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
 	for k, v := range env["headers"] {
-		req.Header.Add(k, resolveExpression(v.(string)))
-	}
+		if config.Headers[k] == false {
+			continue
+		}
 
-	headers := req.Header
-
-	for k, v := range headers {
-		fmt.Println(k, v)
+		req.Header.Set(k, resolveExpression(v.(string)))
 	}
 	
 	res, err := client.Do(req)
@@ -161,13 +163,19 @@ func handleRequest(config Req) {
 
 	if config.Request.Log {
 		renderTableHeader("Request")
-		fmt.Printf("%s => %s\n%s\n", config.Request.Method, url, contentType)
-		fmt.Println("Body:", b)
+		fmt.Printf("%s => %s\n", config.Request.Method, url)
+		headers := req.Header
+
+		for k:= range headers {
+			fmt.Println(k, req.Header.Get(k))
+		}
+		fmt.Println("Body:", body)
 	}
 	
 	if config.Response.Log {
 		renderTableHeader("Response")
-		fmt.Printf("%s", res.Status)
+		fmt.Println(res.Status)
+		fmt.Println(io.Reader(res.Body))	
 	}
 }
 
