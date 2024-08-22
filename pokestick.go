@@ -7,10 +7,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+
 	"os"
 	"regexp"
 	"strings"
 
+	"github.com/fatih/color"
+	"github.com/ohler55/ojg/jp"
+	"github.com/ohler55/ojg/oj"
 	"github.com/pelletier/go-toml"
 )
 
@@ -23,9 +28,9 @@ type Flags struct {
 
 type Req struct {
 	Request Request
-	Body map[string]any
+	Body map[string]string
 	Headers map[string]any
-	Save map[string]any
+	Save map[string]string
 	Response Response
 }
 
@@ -71,14 +76,14 @@ func parseFlags() Flags {
 	flag.StringVar(
 		&env, 
 		"env", 
-		"mocks/ps/dev.env.toml",
+		"../poke-ps/dev.env.toml",
 		"Path to the root of a pokestick project or a specific .env.toml file",
 	)
 
 	flag.StringVar(
 		&req, 
 		"path", 
-		"mocks/ps/authenticate.toml",
+		"../poke-ps/authenticate.toml",
 		"Path to .toml file describing an api request", 
 	)
 	
@@ -131,22 +136,27 @@ func executeRequest(config Req) {
 }
 
 func handleRequest(config Req) {
-	url := resolveExpression(config.Request.Url)
+	// SECTION build http request
+	// build request reqUrl method and content type
+	reqUrl := resolveExpression(config.Request.Url)
 	method := config.Request.Method
 	contentType := resolveExpression(config.Request.ContentType)
-	body, err := json.Marshal(config.Body)
+
+	
+	// resolve and build body
+	for k, v := range config.Body {
+		config.Body[k] = resolveExpression(v)
+	}
+	payload := createKeyValuePairs(config.Body)
+
+	// create http request
+	req, err :=http.NewRequest(string(method), reqUrl, strings.NewReader(payload))
 	if err != nil {
 		panic(err)
 	}
-	client := &http.Client{}
 
-	req, err :=http.NewRequest(string(method), url, bytes.NewBuffer(body))
-	if err != nil {
-		panic(err)
-	}
-
+	// asdd headers to request
 	req.Header.Add("Content-Type", contentType)
-
 	for k, v := range env["headers"] {
 		if config.Headers[k] == false {
 			continue
@@ -154,32 +164,59 @@ func handleRequest(config Req) {
 
 		req.Header.Set(k, resolveExpression(v.(string)))
 	}
+
+	// request logging
+	if config.Request.Log {
+		color.Green(
+			fmt.Sprintf("REQ => %s %s\n", config.Request.Method, reqUrl), 
+		)
+		
+		headers := req.Header
+
+		for k:= range headers {
+			fmt.Printf("%s: %s\n", k, req.Header.Get(k))
+		}
+
+		fmt.Println("payload:")
+		for k, v := range config.Body {
+			fmt.Printf( "%s: %s\n", k, v)
+		}
+	}
 	
+
+	// SECTION execute request and handle response
+	// create http client and do request
+	client := &http.Client{}
 	res, err := client.Do(req)
 	if err != nil {
 		panic(err)
 	}
 	defer res.Body.Close()
 
-	if config.Request.Log {
-		renderTableHeader("Request")
-		fmt.Printf("%s => %s\n", config.Request.Method, url)
-		headers := req.Header
-
-		for k:= range headers {
-			fmt.Println(k, req.Header.Get(k))
-		}
-		fmt.Println("Body:", body)
+	// process response
+	var responseBody map[string]any
+	bytes, err := io.ReadAll(res.Body)
+	if err != nil {
+		panic(err)
 	}
+	err =  oj.Unmarshal(bytes, &responseBody)
+	if err != nil {
+		panic(err)
+	}
+
+	saveResponseValues(env, config, responseBody) 
 	
 	if config.Response.Log {
-		renderTableHeader("Response")
-		fmt.Println(res.Status)
-		fmt.Println(io.Reader(res.Body))	
+		color.Green(fmt.Sprintf("\nRES => %s\n", res.Status)) 
+		jsonString, err := json.MarshalIndent(responseBody, "", "  ")
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(string(jsonString))
 	}
 }
 
-
+// resolve inline interpolation expressions in the toml file
 func resolveExpression(expression string) string {
 	re := regexp.MustCompile(`\$\{([^}]*)\}`)
 	match := re.FindStringSubmatch(expression)
@@ -199,8 +236,22 @@ func resolveExpression(expression string) string {
 	return value
 }
 
-func renderTableHeader(tableName string) {
-	header := strings.Repeat(("="), 50)
-	tableName = strings.Repeat(" ", 25 - (len(tableName) / 2)) + strings.ToTitle(tableName)
-	fmt.Printf("\n%s\n%s\n%s\n", header, tableName, header)
+// small utility function to create a key value pair string from a map
+func createKeyValuePairs(m map[string]string) string {
+	b := new(bytes.Buffer)
+	for key, value := range m {
+			fmt.Fprintf(b, "%s=%s&", key,url.QueryEscape(value))
+	}
+	return b.String()
+}
+
+// small utility function to save response values to a map
+func saveResponseValues(env TomlMap, config Req, res map[string]any) {
+	for k, v := range config.Save {
+		exp, err := jp.ParseString(v)
+		if err != nil {
+			panic(err)
+		}
+		env["config"][k] = exp.Get(res)[0]
+	}
 }
